@@ -103,6 +103,10 @@ class StreamIngestPipeline:
         with self._latest_lock:
             return _state_payload(self._latest_frame_id, self._latest_state, self._latest_summary)
 
+    def latest_state(self) -> RealtimeState:
+        with self._latest_lock:
+            return self._latest_state
+
     def _capture_loop(self) -> None:
         import cv2
 

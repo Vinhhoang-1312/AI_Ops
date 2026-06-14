@@ -8,6 +8,7 @@ from fastapi import FastAPI, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from fer_realtime.config import ROBOT_SVG_PATH
+from fer_realtime.history import fetch_recent_snapshots, init_history_db, save_state_snapshot
 
 from .stream_ingest import StreamIngestPipeline, config_from_env
 
@@ -19,6 +20,7 @@ pipeline: StreamIngestPipeline | None = None
 @app.on_event("startup")
 def startup() -> None:
     global pipeline
+    init_history_db()
     pipeline = StreamIngestPipeline(config_from_env())
     pipeline.start()
 
@@ -60,6 +62,11 @@ def index() -> str:
           .cue-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
           .cue-title { color: var(--teal); font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
           .suggestion { margin-top: 14px; border: 1px solid #f0ca83; background: #fff8e8; border-radius: 8px; padding: 12px; color: #5a3510; line-height: 1.45; }
+          .controls { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 4px; }
+          button { border: 0; border-radius: 8px; padding: 10px 13px; font-weight: 900; cursor: pointer; }
+          .primary { background: var(--teal); color: #fff; }
+          .secondary { background: #e9eef3; color: var(--ink); }
+          .save-note { color: var(--muted); font-size: 13px; min-height: 18px; }
           .bars { margin-top: 14px; }
           .bar-row { margin: 9px 0; }
           .bar-text { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
@@ -67,6 +74,11 @@ def index() -> str:
           .fill { height: 100%; background: linear-gradient(90deg, var(--teal), #2b8aef); width: 0%; }
           .links { margin-top: 10px; font-weight: 800; }
           .links a { color: var(--teal); }
+          .history { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+          .history h2 { margin: 0 0 8px; font-size: 16px; }
+          .history-row { border: 1px solid var(--line); border-radius: 8px; padding: 9px; margin: 7px 0; background: #fbfdff; }
+          .history-row strong { display: block; }
+          .history-row span { color: var(--muted); font-size: 12px; }
           @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .camera img { min-height: 260px; } }
         </style>
       </head>
@@ -102,11 +114,22 @@ def index() -> str:
                 </div>
               </div>
               <div class="suggestion" id="suggestion">Em dang lang nghe. Anh/chi co the chia se them mot chut ve van de minh dang gap khong?</div>
+              <div class="controls">
+                <button class="primary" id="pauseBtn" type="button">Dung lai</button>
+                <button class="secondary" id="saveBtn" type="button">Luu snapshot</button>
+              </div>
+              <div class="save-note" id="saveNote"></div>
               <div class="bars" id="bars"></div>
+              <div class="history">
+                <h2>Saved history</h2>
+                <div id="history">No saved snapshots yet.</div>
+              </div>
             </aside>
           </section>
         </main>
         <script>
+          let paused = false;
+          let pausedState = null;
           const pct = (v) => `${Math.round((v || 0) * 1000) / 10}%`;
           function escapeHtml(value) {
             return String(value ?? "").replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -119,24 +142,59 @@ def index() -> str:
               </div>
             `).join("");
           }
+          function renderState(state) {
+            const cue = (state.cues && state.cues[0]) || {};
+            document.getElementById('label').textContent = cue.display_name || state.label || 'Waiting';
+            document.getElementById('meta').textContent = `Status: ${state.status || 'waiting'} | Samples: ${state.sample_count || 0} | ${state.device || ''}`;
+            document.getElementById('headline').textContent = cue.headline || state.summary || 'Dang doi tin hieu.';
+            document.getElementById('tone').textContent = cue.tone || 'Binh tinh, quan sat them.';
+            document.getElementById('action').textContent = cue.action || 'Doi them mau frame on dinh.';
+            document.getElementById('suggestion').textContent = cue.suggested_response || state.summary || '';
+            document.getElementById('bars').innerHTML = renderBars(state.top_k);
+          }
+          function renderHistory(rows) {
+            const target = document.getElementById('history');
+            if (!rows || rows.length === 0) {
+              target.textContent = 'No saved snapshots yet.';
+              return;
+            }
+            target.innerHTML = rows.slice(0, 6).map((row) => {
+              const top = (row.top_emotions || []).map(([label, score]) => `${escapeHtml(label)} ${pct(score)}`).join(' | ');
+              return `<div class="history-row"><strong>#${row.id} ${top || escapeHtml(row.label || 'unknown')}</strong><span>${escapeHtml(row.created_at)} | ${escapeHtml(row.source)} | samples=${row.sample_count}</span></div>`;
+            }).join('');
+          }
           async function refreshState() {
+            if (paused) return;
             try {
               const res = await fetch('/state', { cache: 'no-store' });
               const state = await res.json();
-              const cue = (state.cues && state.cues[0]) || {};
-              document.getElementById('label').textContent = cue.display_name || state.label || 'Waiting';
-              document.getElementById('meta').textContent = `Status: ${state.status || 'waiting'} | Samples: ${state.sample_count || 0} | ${state.device || ''}`;
-              document.getElementById('headline').textContent = cue.headline || state.summary || 'Dang doi tin hieu.';
-              document.getElementById('tone').textContent = cue.tone || 'Binh tinh, quan sat them.';
-              document.getElementById('action').textContent = cue.action || 'Doi them mau frame on dinh.';
-              document.getElementById('suggestion').textContent = cue.suggested_response || state.summary || '';
-              document.getElementById('bars').innerHTML = renderBars(state.top_k);
+              pausedState = state;
+              renderState(state);
             } catch (err) {
               document.getElementById('headline').textContent = `State error: ${err}`;
             }
           }
+          async function refreshHistory() {
+            const res = await fetch('/history', { cache: 'no-store' });
+            const payload = await res.json();
+            renderHistory(payload.items || []);
+          }
+          document.getElementById('pauseBtn').addEventListener('click', () => {
+            paused = !paused;
+            document.getElementById('pauseBtn').textContent = paused ? 'Chay tiep' : 'Dung lai';
+            document.getElementById('saveNote').textContent = paused ? 'Panel da dung de ban doc ky goi y.' : '';
+            if (paused && pausedState) renderState(pausedState);
+          });
+          document.getElementById('saveBtn').addEventListener('click', async () => {
+            const res = await fetch('/save', { method: 'POST' });
+            const payload = await res.json();
+            document.getElementById('saveNote').textContent = payload.ok ? `Da luu snapshot #${payload.id}` : `Luu that bai: ${payload.error || 'unknown'}`;
+            await refreshHistory();
+          });
           refreshState();
+          refreshHistory();
           setInterval(refreshState, 700);
+          setInterval(refreshHistory, 5000);
         </script>
       </body>
     </html>
@@ -161,6 +219,20 @@ def state() -> dict[str, object]:
     payload = pipeline.latest_state_snapshot()
     payload["ok"] = True
     return payload
+
+
+@app.post("/save")
+def save() -> dict[str, object]:
+    if pipeline is None:
+        return {"ok": False, "error": "not_started"}
+    state = pipeline.latest_state()
+    row_id = save_state_snapshot(state, source="stream_ingest_manual")
+    return {"ok": True, "id": row_id}
+
+
+@app.get("/history")
+def history() -> dict[str, object]:
+    return {"ok": True, "items": fetch_recent_snapshots(limit=8)}
 
 
 @app.get("/support_robot.svg")

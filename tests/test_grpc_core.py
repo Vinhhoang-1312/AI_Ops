@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 from fer_grpc.client import OpenVINOGrpcClient
 from fer_grpc.protocol import dumps, loads
+from fer_grpc import stream_ingest_server
 from fer_grpc.stream_ingest import IngestConfig, _opencv_source
 
 
@@ -34,6 +36,36 @@ class IngestConfigTest(unittest.TestCase):
     def test_local_camera_index_is_supported(self):
         self.assertEqual(_opencv_source("0"), 0)
         self.assertEqual(_opencv_source("http://192.168.1.50:8080/video"), "http://192.168.1.50:8080/video")
+
+
+class StreamIngestServerTest(unittest.TestCase):
+    def test_save_endpoint_persists_latest_pipeline_state(self):
+        class DummyPipeline:
+            def latest_state(self):
+                return type(
+                    "DummyState",
+                    (),
+                    {
+                        "status": "ok",
+                        "label": "neutral",
+                        "confidence": 0.8,
+                        "sample_count": 3,
+                        "latency_ms": 12.0,
+                        "device": "OpenVINO CPU",
+                        "top_k": [("neutral", 0.8), ("sad", 0.2)],
+                        "probabilities": {"neutral": 0.8, "sad": 0.2},
+                    },
+                )()
+
+        original_pipeline = stream_ingest_server.pipeline
+        stream_ingest_server.pipeline = DummyPipeline()
+        try:
+            with patch("fer_grpc.stream_ingest_server.save_state_snapshot", return_value=42):
+                payload = stream_ingest_server.save()
+        finally:
+            stream_ingest_server.pipeline = original_pipeline
+
+        self.assertEqual(payload, {"ok": True, "id": 42})
 
 
 if __name__ == "__main__":
