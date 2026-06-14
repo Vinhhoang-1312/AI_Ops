@@ -2,18 +2,29 @@
 
 ## Quick Setup
 
-Terminal 1 - chay OpenVINO gRPC model server:
+Di chuyen vao thu muc project:
 
 ```powershell
-cd "C:\Users\DELL\Desktop\Vinh Hoang\Master Program\AI trong san xuat DevOps, DataOps, MLOps\Lab1"
+cd "<duong-dan-toi-Lab1>"
+```
+
+Vi du tren may hien tai:
+
+```powershell
+cd "C:\Users\DELL\Desktop\Vinh Hoang\Master Program\AI trong sản xuất DevOps, DataOps, MLOps\Lab1"
+```
+
+Chay model server OpenVINO gRPC:
+
+```powershell
 python -m pip install -r requirements-realtime.txt
 python -m fer_grpc.server --model "models\fer_expression_yolo26n_openvino" --device AUTO --address 127.0.0.1:50051
 ```
 
-Terminal 2 - chay stream ingest + browser UI bang camera laptop:
+Mo terminal thu hai va chay stream ingest + browser UI bang camera laptop:
 
 ```powershell
-cd "C:\Users\DELL\Desktop\Vinh Hoang\Master Program\AI trong san xuat DevOps, DataOps, MLOps\Lab1"
+cd "<duong-dan-toi-Lab1>"
 set IP_CAMERA_URL=0
 set MODEL_SERVER_ADDRESS=127.0.0.1:50051
 set MODEL_SERVER_TIMEOUT_SECONDS=90
@@ -21,56 +32,69 @@ set INGEST_BATCH_SIZE=4
 python -m uvicorn fer_grpc.stream_ingest_server:app --host 127.0.0.1 --port 8080
 ```
 
-Mo UI tren may laptop:
+Mo UI:
 
 ```text
 http://127.0.0.1:8080
 ```
 
-Neu muon xem UI tu dien thoai cung Wi-Fi, chay `uvicorn` voi `--host 0.0.0.0` va mo `http://<IP-laptop>:8080`.
+Neu muon xem UI tu dien thoai cung Wi-Fi:
 
-## Project Summary
+```powershell
+python -m uvicorn fer_grpc.stream_ingest_server:app --host 0.0.0.0 --port 8080
+```
 
-Du an nay la he thong realtime facial-expression recognition. Muc tieu hien tai chi tap trung vao:
-
-- Detect mot hoac nhieu khuon mat trong camera frame.
-- Crop tung khuon mat.
-- Classify bieu cam cua tung crop bang OpenVINO model.
-- Ve bounding box va label ngay tai khuon mat tuong ung.
-- Hien danh sach ket qua tung face trong browser UI.
-- Cho phep dung realtime panel va luu snapshot vao SQLite de xem lai.
-
-Ket qua chi la nhan dien bieu cam nhin thay tren khuon mat, khong phai chan doan cam xuc noi tam hay de xuat cach phan hoi hoi thoai.
-
-## Current Capabilities
-
-- Nhan input tu webcam laptop bang `IP_CAMERA_URL=0`.
-- Nhan input tu phone/IP camera URL, vi du `http://<phone-ip>:8080/video`.
-- Detect nhieu khuon mat trong cung mot frame bang OpenCV Haar Cascade.
-- Classify tung face crop bang OpenVINO IR model.
-- Tra ve `faces[]` cho moi frame, moi face co label, confidence, top-k va bbox.
-- Ve label ngay tren/gan bounding box cua tung khuon mat.
-- Browser UI co hai vung: camera realtime va recognition results.
-- Co nut `Dung lai` / `Chay tiep` de doc ket qua ro hon.
-- Co nut `Luu snapshot` de ghi ket qua hien tai vao SQLite.
-- Co gRPC model server rieng, giao tiep HTTP/2 local.
-- Co stream ingest 3 thread: capture, inference batch, visualize.
-
-## Important Dataset Note
-
-Dataset Kaggle dang dung la dataset co anh va YOLO bbox/label cho facial expressions. No ho tro viec tao face crop va train classifier bieu cam.
-
-Model classifier sau train khong tu no xu ly "2 nguoi" trong anh. Multi-face support duoc lam o runtime bang pipeline:
+Sau do mo tren dien thoai:
 
 ```text
-full camera frame
+http://<IP-laptop>:8080
+```
+
+## Project Purpose
+
+Project nay la he thong realtime facial-expression recognition. He thong chi tap trung vao detect khuon mat va nhan dien bieu cam nhin thay tren tung khuon mat.
+
+Output cua model chi nen hieu la visible facial expression tren camera frame, khong phai chan doan cam xuc noi tam hay ket luan tam ly.
+
+## What The System Can Do
+
+- Lay frame realtime tu webcam laptop hoac IP camera URL.
+- Detect mot hoac nhieu khuon mat trong cung mot frame.
+- Crop tung khuon mat rieng.
+- Classify expression cua tung face crop bang OpenVINO.
+- Ve bounding box va label ngay gan khuon mat tuong ung.
+- Hien ket qua moi face trong browser UI.
+- Co nut `Dung lai` / `Chay tiep` de doc ket qua ro hon.
+- Co nut `Luu snapshot` de luu ket qua hien tai vao SQLite.
+- Tach model serving va stream ingest thanh hai process rieng qua gRPC HTTP/2.
+
+## Multi-Face Logic
+
+Model expression classifier duoc train cho tung face crop. Vi vay model khong tu no xu ly truc tiep anh co 2 nguoi.
+
+Multi-face support duoc lam bang runtime pipeline:
+
+```text
+camera frame
   -> detect all faces
   -> crop face #1, face #2, ...
   -> classify each crop
   -> draw each label beside its own face
+  -> return faces[] to UI
 ```
 
-Vi vay, neu camera thay 2 khuon mat va face detector bat duoc ca 2, he thong co the nhan dien va hien 2 label rieng.
+Neu camera nhin thay 2 khuon mat va face detector bat duoc ca 2, UI se hien 2 box va 2 label rieng.
+
+## Dataset Note
+
+Dataset Kaggle dang dung co anh kem YOLO bbox/label cho facial expressions. Dataset nay phu hop de:
+
+- doc bbox khuon mat.
+- crop khuon mat thanh classification dataset.
+- train/fine-tune classifier bieu cam.
+- export model sang OpenVINO.
+
+Dataset khong co nghia la model classification tu dong nhan dien nhieu nguoi trong mot anh. Phan nhieu nguoi nam o runtime face detection + per-face classification.
 
 ## Architecture
 
@@ -81,9 +105,9 @@ Camera source
         |
         v
 Stream ingest service
-  thread 1: capture frame tu camera/IP stream
-  thread 2: gom batch frame va goi gRPC model server
-  thread 3: annotate frame va publish MJPEG/UI state
+  thread 1: capture frames
+  thread 2: batch frames and call gRPC model server
+  thread 3: annotate frames and publish UI state
         |
         v
 OpenVINO model serving service
@@ -92,51 +116,63 @@ OpenVINO model serving service
         |
         v
 Browser UI
-  realtime annotated camera
+  annotated camera stream
   per-face recognition cards
   pause/save/history controls
 ```
 
-Hien tai he thong khong dung Docker, khong dung TorchServe, va khong load PyTorch `.pt` trong runtime. Cac service chay truc tiep bang Python/Anaconda tren may local.
+Hien tai project khong dung Docker, khong dung TorchServe, va khong load `.pt` trong realtime runtime. File `.pt` chi thuoc training/export pipeline.
 
-## Main Components
+## Repository Structure
 
-`fer_realtime/`
+```text
+fer_realtime/
+  config.py       project paths, class names, default model path
+  model.py        OpenVINO classifier and OpenCV face cropper
+  analyzer.py     realtime state and OpenCV overlay
+  smoothing.py    frame sampling and probability averaging helpers
+  history.py      SQLite recognition snapshot storage
 
-- `config.py`: project paths, OpenVINO model path, SQLite path, class names.
-- `model.py`: OpenVINO model wrapper, preprocessing, probability parsing, Haar face cropper.
-- `analyzer.py`: realtime state, per-face result dataclass, OpenCV overlay.
-- `smoothing.py`: frame sampling va probability averaging helpers.
-- `history.py`: SQLite persistence cho recognition snapshots.
+fer_grpc/
+  server.py               OpenVINO gRPC model server
+  client.py               gRPC inference client
+  codec.py                JPEG/base64 frame encoding helpers
+  protocol.py             JSON bytes protocol for gRPC generic handler
+  stream_ingest.py        3-thread capture/infer/visualize pipeline
+  stream_ingest_server.py FastAPI browser UI and MJPEG/state endpoints
 
-`fer_grpc/`
+models/
+  fer_expression_yolo26n_openvino/
+    best.xml
+    best.bin
+    metadata.yaml
 
-- `server.py`: OpenVINO gRPC model server, detect all faces va infer tung crop.
-- `client.py`: gRPC client cho stream ingest.
-- `codec.py`: JPEG/base64 encode-decode.
-- `protocol.py`: JSON bytes protocol cho gRPC generic handler.
-- `stream_ingest.py`: 3-thread capture/infer/visualize pipeline.
-- `stream_ingest_server.py`: FastAPI browser UI, MJPEG stream, state API, save/history endpoints.
+tests/
+  test_realtime_core.py
+  test_grpc_core.py
 
-Training:
+train_kaggle_fer_openvino_run_all.ipynb
+requirements-realtime.txt
+requirements-train.txt
+```
 
-- `train_kaggle_fer_openvino_run_all.ipynb`: notebook training/export chinh.
+## Runtime Model
 
-Runtime model:
-
-- `models/fer_expression_yolo26n_openvino/best.xml`
-- `models/fer_expression_yolo26n_openvino/best.bin`
-- `models/fer_expression_yolo26n_openvino/metadata.yaml`
-
-## Model
-
-Runtime model la OpenVINO IR, khong phai `.pt`:
+Realtime app dung OpenVINO IR:
 
 ```text
 models\fer_expression_yolo26n_openvino
 ```
 
-Class hien tai:
+Folder model gom:
+
+```text
+best.xml
+best.bin
+metadata.yaml
+```
+
+Classes hien tai:
 
 ```text
 angry
@@ -150,58 +186,21 @@ sleepy
 surprise
 ```
 
-Ultralytics/PyTorch chi duoc dung trong training/export. Khi app realtime chay, `OpenVINOExpressionClassifier` load `.xml/.bin` va infer bang OpenVINO.
-
-## Realtime Inference Logic
-
-Moi frame realtime di qua cac buoc:
-
-1. Capture frame tu camera.
-2. Detect tat ca khuon mat bang OpenCV Haar Cascade.
-3. Chuyen moi bbox thanh square crop co margin.
-4. Resize/cvtColor/normalize crop ve input shape cua model.
-5. Goi OpenVINO model de lay probability vector.
-6. Lay top-k expression cho tung face.
-7. Ve bbox va label ngay tai khuon mat.
-8. Publish annotated frame qua `/mjpeg`.
-9. Publish structured JSON qua `/state`.
-
-Voi multi-face, he thong khong average chung giua cac nguoi khac nhau. Moi face co ket qua rieng trong `faces[]`.
-
-## Browser UI
-
-FastAPI UI tai:
-
-```text
-http://127.0.0.1:8080
-```
-
-UI hien tai co:
-
-- Realtime annotated camera.
-- Recognition results panel.
-- Card rieng cho tung face.
-- Top-k probability bars trong moi face card.
-- `Dung lai` de freeze panel.
-- `Chay tiep` de tiep tuc realtime update.
-- `Luu snapshot` de ghi SQLite.
-- Saved history list.
-
-Endpoints:
+## Browser Endpoints
 
 | Endpoint | Purpose |
 | --- | --- |
-| `/` | Browser UI. |
-| `/mjpeg` | MJPEG annotated camera stream. |
-| `/snapshot.jpg` | Latest annotated JPEG. |
-| `/state` | Latest recognition state JSON. |
-| `/save` | Save current state to SQLite. |
-| `/history` | Recent saved snapshots. |
-| `/health` | Basic pipeline status. |
+| `/` | Browser UI |
+| `/mjpeg` | MJPEG annotated camera stream |
+| `/snapshot.jpg` | Latest annotated JPEG |
+| `/state` | Latest recognition state JSON |
+| `/save` | Save current state to SQLite |
+| `/history` | Recent saved snapshots |
+| `/health` | Pipeline health/status |
 
 ## SQLite History
 
-Snapshots duoc luu vao:
+Snapshots duoc luu tai:
 
 ```text
 data\fer_recognition_history.sqlite3
@@ -213,24 +212,23 @@ Bang chinh:
 recognition_snapshots
 ```
 
-Moi row luu:
+Moi snapshot luu:
 
-- thoi gian tao snapshot.
+- timestamp.
 - source.
 - status.
 - label/confidence chinh.
 - face_count.
-- sample_count.
 - latency/device.
 - top emotions JSON.
 - faces JSON, gom label, confidence, top-k va bbox cua tung face.
 - probabilities JSON.
 
-Folder `data/` nam trong `.gitignore`, nen history local khong bi push len GitHub.
+Thu muc `data/` nam trong `.gitignore`, nen database local khong bi push len GitHub.
 
-## Phone Camera Flow
+## Phone Camera
 
-De dung camera dien thoai lam source, dien thoai can app IP camera rieng. Browser tren dien thoai khong tu bien camera thanh URL stream.
+Neu muon dung camera dien thoai lam camera source, dien thoai can app IP camera rieng.
 
 Flow:
 
@@ -247,79 +245,73 @@ Laptop browser UI
   http://127.0.0.1:8080
 ```
 
-Neu muon dien thoai xem UI cua laptop:
-
-```powershell
-python -m uvicorn fer_grpc.stream_ingest_server:app --host 0.0.0.0 --port 8080
-```
-
-Sau do mo tren dien thoai:
-
-```text
-http://<laptop-ip>:8080
-```
-
-Can phan biet:
+Luu y:
 
 - IP dien thoai la camera source.
 - IP laptop la UI/server source.
 - `127.0.0.1` chi dung tren chinh may dang chay service.
 
-## Training Pipeline
+## Training
 
-Notebook training duy nhat:
+Notebook training chinh:
 
 ```text
 train_kaggle_fer_openvino_run_all.ipynb
 ```
 
-Dataset raw duoc dat o:
+Dataset raw nen dat tai:
 
 ```text
 data\kaggle_fer_yolo_raw\9 Facial Expressions you need
 ```
 
-Notebook lam cac buoc:
+Notebook thuc hien:
 
-1. Kiem tra project va raw dataset.
-2. Xoa output train/export cu de tranh lan model.
-3. Doc YOLO bbox labels cua dataset.
+1. Kiem tra raw dataset.
+2. Xoa output train/export cu.
+3. Doc YOLO bbox labels.
 4. Crop face boxes thanh classification dataset.
 5. Train/fine-tune Ultralytics YOLO classification model.
-6. Validate top-1/top-5.
-7. Export checkpoint tot nhat sang OpenVINO.
+6. Validate model.
+7. Export best checkpoint sang OpenVINO.
 8. Publish model vao `models\fer_expression_yolo26n_openvino`.
-9. Verify runtime OpenVINO classifier load duoc model.
+9. Verify OpenVINO runtime load duoc model.
 
-## Stream Ingest Configuration
+## Environment Variables
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `IP_CAMERA_URL` | `0` | Camera source. `0` la webcam laptop, URL la IP camera/phone. |
-| `MODEL_SERVER_ADDRESS` | `127.0.0.1:50051` | Dia chi gRPC model server. |
-| `MODEL_SERVER_TIMEOUT_SECONDS` | `90` | Timeout cho request inference batch. |
+| `IP_CAMERA_URL` | `0` | Camera source. `0` la webcam laptop. URL la IP camera/phone. |
+| `MODEL_SERVER_ADDRESS` | `127.0.0.1:50051` | gRPC model server address. |
+| `MODEL_SERVER_TIMEOUT_SECONDS` | `90` | Timeout cho inference request. |
 | `INGEST_BATCH_SIZE` | `16` | So frame toi da trong mot inference request. |
 | `INGEST_BATCH_TIMEOUT_SECONDS` | `0.25` | Thoi gian doi gom batch. |
-| `INGEST_FRAME_QUEUE_SIZE` | `64` | Queue frame capture. |
-| `INGEST_RESULT_QUEUE_SIZE` | `64` | Queue frame da infer. |
-| `INGEST_AVERAGE_WINDOW` | `3` | Dung cho fallback single-result smoothing. |
+| `INGEST_FRAME_QUEUE_SIZE` | `64` | Queue size cho captured frames. |
+| `INGEST_RESULT_QUEUE_SIZE` | `64` | Queue size cho inference results. |
+| `INGEST_AVERAGE_WINDOW` | `3` | Fallback smoothing window khi chi co single-result path. |
 | `INGEST_FACE_CROP` | `true` | Bat/tat face crop trong model server. |
-| `INGEST_SHOW_WINDOW` | `false` | Mo OpenCV window local neu can. |
+| `INGEST_SHOW_WINDOW` | `false` | Mo OpenCV local window neu can. |
 
-Voi laptop CPU, `INGEST_BATCH_SIZE=4` thuong on dinh hon `16`. Batch 16 van duoc ho tro, nhung CPU yeu co the cham hoac timeout.
+Voi laptop CPU, nen bat dau bang:
+
+```powershell
+set INGEST_BATCH_SIZE=4
+```
+
+Batch lon hon co the tang throughput, nhung cung co the lam latency cao hoac timeout neu CPU cham.
 
 ## Tests
 
-Chay unit tests:
+Chay tests:
 
 ```powershell
 python -m unittest discover -s tests
 ```
 
-Test hien tai cover:
+Tests cover:
 
-- OpenVINO path validation.
-- Probability smoothing.
+- OpenVINO model path validation.
+- Probability smoothing helpers.
 - SQLite recognition snapshot save/fetch.
 - gRPC JSON payload roundtrip.
 - Stream ingest config.
@@ -328,20 +320,18 @@ Test hien tai cover:
 
 ## Current Limitations
 
-- Face detector hien tai la OpenCV Haar Cascade, nhe va de chay nhung co the miss face nghieng, nho, bi che, hoac anh sang xau.
-- Chua co face tracking ID, nen `Face #1`/`Face #2` la theo frame hien tai, khong phai identity co dinh theo thoi gian.
-- OpenVINO model hien tai co the export batch 1; wrapper se thu dynamic batch va fallback per-frame neu can.
-- gRPC dang dung local insecure port, chua co TLS.
-- gRPC payload dang dung JSON bytes de don gian, chua dung generated protobuf schema.
-- Ket qua chi la visible expression recognition, khong nen xem la cam xuc noi tam chac chan.
+- Face detector hien tai la OpenCV Haar Cascade, nhe nhung co the miss face nghieng, face nho, bi che, hoac anh sang xau.
+- Chua co face tracking ID theo thoi gian. `Face #1` va `Face #2` la thu tu trong frame hien tai.
+- OpenVINO model co the dang batch 1; wrapper se thu dynamic batch va fallback per-frame neu can.
+- gRPC local hien tai chua co TLS.
+- gRPC protocol dung JSON bytes de don gian, chua dung generated protobuf schema.
 
 ## Possible Improvements
 
-- Doi Haar Cascade sang MediaPipe/RetinaFace/YOLO face detector de bat nhieu mat on dinh hon.
-- Them face tracking de gan ID on dinh cho tung nguoi.
-- Export OpenVINO model voi dynamic batch hoac batch 16 that su.
+- Doi face detector sang MediaPipe, RetinaFace, hoac YOLO face detector.
+- Them face tracking de giu ID on dinh cho tung nguoi.
+- Export OpenVINO dynamic batch hoac batch 16 that su.
 - Dung protobuf schema chuan cho gRPC.
-- Them TLS neu deploy qua network that.
+- Them TLS neu chay qua network that.
 - Them dashboard FPS, latency, queue size, dropped frames.
-- Them confusion matrix/per-class report trong docs training.
-- Them model registry/versioning de quan ly nhieu ban OpenVINO model.
+- Them model registry/versioning de quan ly nhieu ban model.
