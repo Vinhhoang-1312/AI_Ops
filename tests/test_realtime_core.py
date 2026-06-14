@@ -3,9 +3,9 @@ import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fer_realtime.emotion_policy import cue_for_expression
+from fer_realtime.analyzer import FaceExpression
 from fer_realtime.history import fetch_recent_snapshots, save_state_snapshot
-from fer_realtime.model import OpenVINOExpressionClassifier, validate_openvino_model_path
+from fer_realtime.model import FaceRegion, OpenVINOExpressionClassifier, validate_openvino_model_path
 from fer_realtime.smoothing import FrameSampler, ProbabilityAverager
 
 
@@ -19,6 +19,16 @@ class DummyState:
     status: str = "ok"
     top_k: list[tuple[str, float]] = field(default_factory=lambda: [("neutral", 0.8), ("happy", 0.2)])
     probabilities: dict[str, float] = field(default_factory=lambda: {"neutral": 0.8, "happy": 0.2})
+    faces: list[FaceExpression] = field(
+        default_factory=lambda: [
+            FaceExpression(
+                label="neutral",
+                confidence=0.8,
+                top_k=[("neutral", 0.8), ("happy", 0.2)],
+                face_region=FaceRegion(10, 20, 120, 120, detected=True),
+            )
+        ]
+    )
 
 
 class FrameSamplerTest(unittest.TestCase):
@@ -52,14 +62,6 @@ class ProbabilityAveragerTest(unittest.TestCase):
 
         self.assertEqual(result.label, "happy")
         self.assertAlmostEqual(result.probabilities["happy"], 1.0)
-
-
-class PolicyTest(unittest.TestCase):
-    def test_sad_maps_to_empathy_cue(self):
-        cue = cue_for_expression("sad", confidence=0.91)
-
-        self.assertEqual(cue.label, "sad")
-        self.assertIn("dong cam", cue.action.lower())
 
 
 class OpenVINOModelValidationTest(unittest.TestCase):
@@ -99,7 +101,8 @@ class HistoryTest(unittest.TestCase):
             self.assertEqual(row_id, 1)
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["top_emotions"][0][0], "neutral")
-            self.assertEqual(rows[0]["cue_sections"][1]["label"], "happy")
+            self.assertEqual(rows[0]["face_count"], 1)
+            self.assertEqual(rows[0]["faces"][0]["label"], "neutral")
 
 
 if __name__ == "__main__":

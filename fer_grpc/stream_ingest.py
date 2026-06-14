@@ -10,8 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from fer_realtime.analyzer import RealtimeState, draw_overlay
-from fer_realtime.emotion_policy import cue_for_expression
+from fer_realtime.analyzer import FaceExpression, RealtimeState, draw_overlay
 from fer_realtime.model import FaceRegion
 from fer_realtime.smoothing import ProbabilityAverager
 
@@ -146,7 +145,7 @@ class StreamIngestPipeline:
                     state = self._state_from_result(result)
                     self._put_latest(self.visual_queue, VisualFrame(captured, state))
             except Exception as exc:
-                state = RealtimeState(status=f"error: {exc}", cue=cue_for_expression(None))
+                state = RealtimeState(status=f"error: {exc}")
                 self._put_latest(self.visual_queue, VisualFrame(batch[-1], state))
 
     def _visualize_loop(self) -> None:
@@ -180,7 +179,26 @@ class StreamIngestPipeline:
 
     def _state_from_result(self, result: dict[str, Any]) -> RealtimeState:
         if result.get("status") != "ok":
-            return RealtimeState(status=str(result.get("status", "error")), cue=cue_for_expression(None))
+            return RealtimeState(status=str(result.get("status", "error")))
+
+        faces = [_face_expression_from_dict(item) for item in result.get("faces", []) if isinstance(item, dict)]
+        faces = [face for face in faces if face is not None]
+        if faces:
+            first = faces[0]
+            return RealtimeState(
+                label=first.label,
+                confidence=first.confidence,
+                probabilities={str(k): float(v) for k, v in result.get("probabilities", {}).items()},
+                top_k=first.top_k,
+                face_region=first.face_region,
+                faces=faces,
+                face_detected=True,
+                sample_count=len(faces),
+                latency_ms=first.latency_ms,
+                device=first.device,
+                updated_at=time.monotonic(),
+                status="ok",
+            )
 
         probabilities = {str(k): float(v) for k, v in result.get("probabilities", {}).items()}
         averaged = self.averager.update(probabilities)
@@ -193,7 +211,6 @@ class StreamIngestPipeline:
             confidence=confidence,
             probabilities=averaged.probabilities,
             top_k=top_k,
-            cue=cue_for_expression(label, confidence),
             face_region=face_region,
             face_detected=bool(face_region and face_region.detected),
             sample_count=averaged.sample_count,
@@ -269,7 +286,25 @@ def _face_region_from_dict(value: Any) -> FaceRegion | None:
     )
 
 
+def _face_expression_from_dict(value: dict[str, Any]) -> FaceExpression | None:
+    region = _face_region_from_dict(value.get("face_region"))
+    if region is None:
+        return None
+    top_k = [(str(label), float(score)) for label, score in value.get("top_k", [])]
+    return FaceExpression(
+        label=str(value.get("label", "unknown")),
+        confidence=float(value.get("confidence", 0.0)),
+        top_k=top_k,
+        face_region=region,
+        latency_ms=float(value.get("latency_ms", 0.0)),
+        device=str(value.get("device", "")),
+    )
+
+
 def _state_summary(frame_id: int, state: RealtimeState) -> str:
+    if state.faces:
+        labels = " | ".join(f"face{idx + 1}:{face.label}={face.confidence * 100:.1f}%" for idx, face in enumerate(state.faces[:3]))
+        return f"frame={frame_id} faces={len(state.faces)} {labels} latency_ms={state.latency_ms:.1f}"
     if not state.top_k:
         return f"frame={frame_id} status={state.status}"
     top_two = " | ".join(f"{label}={score * 100:.1f}%" for label, score in state.top_k[:2])
@@ -278,20 +313,23 @@ def _state_summary(frame_id: int, state: RealtimeState) -> str:
 
 def _state_payload(frame_id: int | None, state: RealtimeState, summary: str) -> dict[str, Any]:
     top_k = [{"label": label, "score": score} for label, score in state.top_k[:3]]
-    cues = []
-    for label, score in state.top_k[:2]:
-        cue = cue_for_expression(label, score)
-        cues.append(
-            {
-                "label": label,
-                "score": score,
-                "display_name": cue.display_name,
-                "headline": cue.headline,
-                "tone": cue.tone,
-                "action": cue.action,
-                "suggested_response": cue.suggested_response,
-            }
-        )
+    faces = [
+        {
+            "label": face.label,
+            "confidence": face.confidence,
+            "top_k": [{"label": label, "score": score} for label, score in face.top_k[:3]],
+            "face_region": {
+                "x": face.face_region.x,
+                "y": face.face_region.y,
+                "w": face.face_region.w,
+                "h": face.face_region.h,
+                "detected": face.face_region.detected,
+            },
+            "latency_ms": face.latency_ms,
+            "device": face.device,
+        }
+        for face in state.faces
+    ]
 
     return {
         "frame_id": frame_id,
@@ -300,7 +338,7 @@ def _state_payload(frame_id: int | None, state: RealtimeState, summary: str) -> 
         "label": state.label,
         "confidence": state.confidence,
         "top_k": top_k,
-        "cues": cues,
+        "faces": faces,
         "sample_count": state.sample_count,
         "latency_ms": state.latency_ms,
         "device": state.device,

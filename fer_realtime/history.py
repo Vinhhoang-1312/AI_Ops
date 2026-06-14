@@ -1,4 +1,4 @@
-"""SQLite persistence for realtime expression-coach snapshots."""
+"""SQLite persistence for realtime facial-expression recognition snapshots."""
 
 from __future__ import annotations
 
@@ -10,22 +10,22 @@ from pathlib import Path
 from typing import Any
 
 from .config import HISTORY_DB_PATH
-from .emotion_policy import cue_for_expression
 
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS emotion_snapshots (
+CREATE TABLE IF NOT EXISTS recognition_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
     source TEXT NOT NULL,
     status TEXT NOT NULL,
     label TEXT,
     confidence REAL NOT NULL,
+    face_count INTEGER NOT NULL,
     sample_count INTEGER NOT NULL,
     latency_ms REAL NOT NULL,
     device TEXT NOT NULL,
     top_emotions_json TEXT NOT NULL,
-    cue_sections_json TEXT NOT NULL,
+    faces_json TEXT NOT NULL,
     probabilities_json TEXT NOT NULL
 );
 """
@@ -44,16 +44,16 @@ def save_state_snapshot(state: Any, source: str = "manual", db_path: str | Path 
     """Persist the current realtime state and return the inserted row id."""
     path = init_history_db(db_path)
     top_emotions = _top_emotions(state)
-    cue_sections = [_cue_section(label, score, rank) for rank, (label, score) in enumerate(top_emotions, start=1)]
+    faces = _faces(state)
 
     with closing(sqlite3.connect(path)) as conn:
         cursor = conn.execute(
             """
-            INSERT INTO emotion_snapshots (
-                created_at, source, status, label, confidence, sample_count,
-                latency_ms, device, top_emotions_json, cue_sections_json, probabilities_json
+            INSERT INTO recognition_snapshots (
+                created_at, source, status, label, confidence, face_count, sample_count,
+                latency_ms, device, top_emotions_json, faces_json, probabilities_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -61,11 +61,12 @@ def save_state_snapshot(state: Any, source: str = "manual", db_path: str | Path 
                 str(getattr(state, "status", "")),
                 getattr(state, "label", None),
                 float(getattr(state, "confidence", 0.0)),
+                len(faces),
                 int(getattr(state, "sample_count", 0)),
                 float(getattr(state, "latency_ms", 0.0)),
                 str(getattr(state, "device", "")),
                 json.dumps(top_emotions, ensure_ascii=True),
-                json.dumps(cue_sections, ensure_ascii=True),
+                json.dumps(faces, ensure_ascii=True),
                 json.dumps(getattr(state, "probabilities", {}) or {}, ensure_ascii=True),
             ),
         )
@@ -82,9 +83,9 @@ def fetch_recent_snapshots(limit: int = 12, db_path: str | Path = HISTORY_DB_PAT
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT id, created_at, source, status, label, confidence, sample_count,
-                   latency_ms, device, top_emotions_json, cue_sections_json
-            FROM emotion_snapshots
+            SELECT id, created_at, source, status, label, confidence, face_count, sample_count,
+                   latency_ms, device, top_emotions_json, faces_json
+            FROM recognition_snapshots
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -105,22 +106,34 @@ def _top_emotions(state: Any, limit: int = 2) -> list[tuple[str, float]]:
     return []
 
 
-def _cue_section(label: str, score: float, rank: int) -> dict[str, Any]:
-    cue = cue_for_expression(label, score)
-    return {
-        "rank": int(rank),
-        "label": str(label),
-        "score": float(score),
-        "display_name": cue.display_name,
-        "headline": cue.headline,
-        "tone": cue.tone,
-        "action": cue.action,
-        "suggested_response": cue.suggested_response,
-    }
+def _faces(state: Any) -> list[dict[str, Any]]:
+    faces = getattr(state, "faces", None) or []
+    if not faces:
+        return []
+
+    items = []
+    for idx, face in enumerate(faces, start=1):
+        region = getattr(face, "face_region", None)
+        items.append(
+            {
+                "rank": idx,
+                "label": str(getattr(face, "label", "unknown")),
+                "confidence": float(getattr(face, "confidence", 0.0)),
+                "top_k": [(str(label), float(score)) for label, score in (getattr(face, "top_k", None) or [])],
+                "face_region": {
+                    "x": int(getattr(region, "x", 0)),
+                    "y": int(getattr(region, "y", 0)),
+                    "w": int(getattr(region, "w", 0)),
+                    "h": int(getattr(region, "h", 0)),
+                    "detected": bool(getattr(region, "detected", False)),
+                },
+            }
+        )
+    return items
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
     item["top_emotions"] = json.loads(item.pop("top_emotions_json"))
-    item["cue_sections"] = json.loads(item.pop("cue_sections_json"))
+    item["faces"] = json.loads(item.pop("faces_json"))
     return item

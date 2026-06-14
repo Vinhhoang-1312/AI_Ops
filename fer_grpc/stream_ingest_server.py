@@ -7,7 +7,6 @@ import asyncio
 from fastapi import FastAPI, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from fer_realtime.config import ROBOT_SVG_PATH
 from fer_realtime.history import fetch_recent_snapshots, init_history_db, save_state_snapshot
 
 from .stream_ingest import StreamIngestPipeline, config_from_env
@@ -41,10 +40,10 @@ def index() -> str:
         <style>
           :root {
             --ink:#121924; --muted:#5c6975; --line:#d8e0e7; --bg:#f4f7fb;
-            --panel:#fff; --teal:#0e766f; --gold:#b7791f; --red:#d64545;
+            --panel:#fff; --teal:#0e766f; --blue:#2563eb; --red:#d64545;
           }
           * { box-sizing: border-box; }
-          body { margin: 0; background: radial-gradient(circle at top left, #e7f4f2, var(--bg) 34%, #f8fafc); color: var(--ink); font-family: "Trebuchet MS", "Segoe UI", sans-serif; }
+          body { margin: 0; background: radial-gradient(circle at top left, #e7f4f2, var(--bg) 34%, #f8fafc); color: var(--ink); font-family: "Segoe UI", Arial, sans-serif; }
           main { max-width: 1440px; margin: 0 auto; padding: 24px; }
           header { margin-bottom: 14px; }
           h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 0; }
@@ -52,22 +51,21 @@ def index() -> str:
           .grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(360px, .9fr); gap: 18px; align-items: start; }
           .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; box-shadow: 0 16px 34px rgba(22,38,51,.08); }
           .camera img { display: block; width: 100%; border-radius: 6px; background: #101820; min-height: 420px; object-fit: contain; }
-          .coach-head { display: grid; grid-template-columns: 116px 1fr; gap: 16px; align-items: center; margin-bottom: 16px; }
-          .robot { width: 116px; height: 116px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #f8fbfd; }
           .eyebrow { color: var(--teal); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-          .label { font-size: 30px; font-weight: 900; line-height: 1.05; margin: 5px 0; }
+          .label { font-size: 28px; font-weight: 900; line-height: 1.08; margin: 5px 0; }
           .meta { color: var(--muted); font-size: 14px; }
-          .headline { border-left: 4px solid var(--red); padding: 8px 0 8px 12px; font-size: 19px; font-weight: 800; line-height: 1.35; margin: 12px 0 16px; }
-          .cue-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-          .cue-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-          .cue-title { color: var(--teal); font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
-          .suggestion { margin-top: 14px; border: 1px solid #f0ca83; background: #fff8e8; border-radius: 8px; padding: 12px; color: #5a3510; line-height: 1.45; }
+          .summary { border-left: 4px solid var(--teal); padding: 8px 0 8px 12px; font-size: 16px; font-weight: 800; line-height: 1.35; margin: 12px 0 16px; }
           .controls { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 4px; }
           button { border: 0; border-radius: 8px; padding: 10px 13px; font-weight: 900; cursor: pointer; }
           .primary { background: var(--teal); color: #fff; }
           .secondary { background: #e9eef3; color: var(--ink); }
           .save-note { color: var(--muted); font-size: 13px; min-height: 18px; }
-          .bars { margin-top: 14px; }
+          .faces { display: grid; gap: 12px; margin-top: 12px; }
+          .face-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbfdff; }
+          .face-top { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 10px; }
+          .face-title { font-weight: 900; }
+          .face-label { color: var(--teal); font-size: 20px; font-weight: 900; margin-top: 2px; }
+          .face-conf { color: var(--blue); font-weight: 900; white-space: nowrap; }
           .bar-row { margin: 9px 0; }
           .bar-text { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
           .track { height: 8px; border-radius: 99px; background: #edf1f5; overflow: hidden; }
@@ -79,6 +77,7 @@ def index() -> str:
           .history-row { border: 1px solid var(--line); border-radius: 8px; padding: 9px; margin: 7px 0; background: #fbfdff; }
           .history-row strong { display: block; }
           .history-row span { color: var(--muted); font-size: 12px; }
+          .empty { color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; padding: 12px; background: #fbfdff; }
           @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .camera img { min-height: 260px; } }
         </style>
       </head>
@@ -86,40 +85,26 @@ def index() -> str:
         <main>
           <header>
             <h1>FER OpenVINO gRPC Stream Ingest</h1>
-            <p class="subtitle">IP camera capture -> batched gRPC inference -> realtime robot coach.</p>
+            <p class="subtitle">Camera capture -> multi-face detection -> batched gRPC expression recognition.</p>
           </header>
           <section class="grid">
             <div>
               <div class="panel camera"><img src="/mjpeg" alt="FER stream preview" /></div>
               <div class="links"><a href="/health">Health</a> | <a href="/state">State</a> | <a href="/snapshot.jpg">Snapshot JPEG</a></div>
             </div>
-            <aside class="panel coach">
-              <div class="coach-head">
-                <img class="robot" src="/support_robot.svg" alt="Support robot" />
-                <div>
-                  <div class="eyebrow">Robot coach</div>
-                  <div class="label" id="label">Waiting</div>
-                  <div class="meta" id="meta">Waiting for realtime frames</div>
-                </div>
+            <aside class="panel">
+              <div>
+                <div class="eyebrow">Recognition results</div>
+                <div class="label" id="label">Waiting</div>
+                <div class="meta" id="meta">Waiting for realtime frames</div>
               </div>
-              <div class="headline" id="headline">Dang doi tin hieu tu camera va model server.</div>
-              <div class="cue-grid">
-                <div class="cue-card">
-                  <div class="cue-title">Tone</div>
-                  <div id="tone">Binh tinh, quan sat them.</div>
-                </div>
-                <div class="cue-card">
-                  <div class="cue-title">Action</div>
-                  <div id="action">Doi them mau frame on dinh.</div>
-                </div>
-              </div>
-              <div class="suggestion" id="suggestion">Em dang lang nghe. Anh/chi co the chia se them mot chut ve van de minh dang gap khong?</div>
+              <div class="summary" id="summary">Dang doi tin hieu tu camera va model server.</div>
               <div class="controls">
                 <button class="primary" id="pauseBtn" type="button">Dung lai</button>
                 <button class="secondary" id="saveBtn" type="button">Luu snapshot</button>
               </div>
               <div class="save-note" id="saveNote"></div>
-              <div class="bars" id="bars"></div>
+              <div class="faces" id="faces"></div>
               <div class="history">
                 <h2>Saved history</h2>
                 <div id="history">No saved snapshots yet.</div>
@@ -142,15 +127,34 @@ def index() -> str:
               </div>
             `).join("");
           }
+          function renderFaceCards(faces) {
+            if (!faces || faces.length === 0) {
+              return `<div class="empty">Chua phat hien khuon mat nao trong frame moi nhat.</div>`;
+            }
+            return faces.map((face, index) => {
+              const region = face.face_region || {};
+              return `
+                <div class="face-card">
+                  <div class="face-top">
+                    <div>
+                      <div class="face-title">Face #${index + 1}</div>
+                      <div class="face-label">${escapeHtml(face.label || 'unknown')}</div>
+                      <div class="meta">bbox x=${region.x ?? 0}, y=${region.y ?? 0}, w=${region.w ?? 0}, h=${region.h ?? 0}</div>
+                    </div>
+                    <div class="face-conf">${pct(face.confidence)}</div>
+                  </div>
+                  ${renderBars(face.top_k)}
+                </div>
+              `;
+            }).join("");
+          }
           function renderState(state) {
-            const cue = (state.cues && state.cues[0]) || {};
-            document.getElementById('label').textContent = cue.display_name || state.label || 'Waiting';
-            document.getElementById('meta').textContent = `Status: ${state.status || 'waiting'} | Samples: ${state.sample_count || 0} | ${state.device || ''}`;
-            document.getElementById('headline').textContent = cue.headline || state.summary || 'Dang doi tin hieu.';
-            document.getElementById('tone').textContent = cue.tone || 'Binh tinh, quan sat them.';
-            document.getElementById('action').textContent = cue.action || 'Doi them mau frame on dinh.';
-            document.getElementById('suggestion').textContent = cue.suggested_response || state.summary || '';
-            document.getElementById('bars').innerHTML = renderBars(state.top_k);
+            const faces = state.faces || [];
+            const faceText = `${faces.length} face${faces.length === 1 ? '' : 's'}`;
+            document.getElementById('label').textContent = faces.length ? `${faceText} detected` : (state.label || 'Waiting');
+            document.getElementById('meta').textContent = `Status: ${state.status || 'waiting'} | Frame: ${state.frame_id ?? '-'} | ${state.device || ''}`;
+            document.getElementById('summary').textContent = state.summary || 'Dang doi tin hieu.';
+            document.getElementById('faces').innerHTML = renderFaceCards(faces);
           }
           function renderHistory(rows) {
             const target = document.getElementById('history');
@@ -160,7 +164,7 @@ def index() -> str:
             }
             target.innerHTML = rows.slice(0, 6).map((row) => {
               const top = (row.top_emotions || []).map(([label, score]) => `${escapeHtml(label)} ${pct(score)}`).join(' | ');
-              return `<div class="history-row"><strong>#${row.id} ${top || escapeHtml(row.label || 'unknown')}</strong><span>${escapeHtml(row.created_at)} | ${escapeHtml(row.source)} | samples=${row.sample_count}</span></div>`;
+              return `<div class="history-row"><strong>#${row.id} ${top || escapeHtml(row.label || 'unknown')}</strong><span>${escapeHtml(row.created_at)} | ${escapeHtml(row.source)} | faces=${row.face_count || 0}</span></div>`;
             }).join('');
           }
           async function refreshState() {
@@ -171,7 +175,7 @@ def index() -> str:
               pausedState = state;
               renderState(state);
             } catch (err) {
-              document.getElementById('headline').textContent = `State error: ${err}`;
+              document.getElementById('summary').textContent = `State error: ${err}`;
             }
           }
           async function refreshHistory() {
@@ -182,7 +186,7 @@ def index() -> str:
           document.getElementById('pauseBtn').addEventListener('click', () => {
             paused = !paused;
             document.getElementById('pauseBtn').textContent = paused ? 'Chay tiep' : 'Dung lai';
-            document.getElementById('saveNote').textContent = paused ? 'Panel da dung de ban doc ky goi y.' : '';
+            document.getElementById('saveNote').textContent = paused ? 'Panel da dung de ban doc ky ket qua nhan dien.' : '';
             if (paused && pausedState) renderState(pausedState);
           });
           document.getElementById('saveBtn').addEventListener('click', async () => {
@@ -233,13 +237,6 @@ def save() -> dict[str, object]:
 @app.get("/history")
 def history() -> dict[str, object]:
     return {"ok": True, "items": fetch_recent_snapshots(limit=8)}
-
-
-@app.get("/support_robot.svg")
-def support_robot() -> Response:
-    if not ROBOT_SVG_PATH.exists():
-        return Response(status_code=404)
-    return Response(content=ROBOT_SVG_PATH.read_bytes(), media_type="image/svg+xml")
 
 
 @app.get("/snapshot.jpg")

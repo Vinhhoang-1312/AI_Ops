@@ -4,7 +4,9 @@ from unittest.mock import patch
 from fer_grpc.client import OpenVINOGrpcClient
 from fer_grpc.protocol import dumps, loads
 from fer_grpc import stream_ingest_server
-from fer_grpc.stream_ingest import IngestConfig, _opencv_source
+from fer_grpc.stream_ingest import IngestConfig, _opencv_source, _state_payload
+from fer_realtime.analyzer import FaceExpression, RealtimeState
+from fer_realtime.model import FaceRegion
 
 
 class GrpcProtocolTest(unittest.TestCase):
@@ -54,6 +56,7 @@ class StreamIngestServerTest(unittest.TestCase):
                         "device": "OpenVINO CPU",
                         "top_k": [("neutral", 0.8), ("sad", 0.2)],
                         "probabilities": {"neutral": 0.8, "sad": 0.2},
+                        "faces": [],
                     },
                 )()
 
@@ -66,6 +69,43 @@ class StreamIngestServerTest(unittest.TestCase):
             stream_ingest_server.pipeline = original_pipeline
 
         self.assertEqual(payload, {"ok": True, "id": 42})
+
+    def test_state_payload_includes_per_face_results(self):
+        state = RealtimeState(
+            label="neutral",
+            confidence=0.9,
+            top_k=[("neutral", 0.9), ("sad", 0.1)],
+            faces=[
+                FaceExpression(
+                    label="neutral",
+                    confidence=0.9,
+                    top_k=[("neutral", 0.9), ("sad", 0.1)],
+                    face_region=FaceRegion(10, 20, 100, 100, detected=True),
+                    latency_ms=3.2,
+                    device="OpenVINO CPU",
+                ),
+                FaceExpression(
+                    label="happy",
+                    confidence=0.7,
+                    top_k=[("happy", 0.7), ("neutral", 0.3)],
+                    face_region=FaceRegion(160, 22, 96, 96, detected=True),
+                    latency_ms=3.2,
+                    device="OpenVINO CPU",
+                ),
+            ],
+            sample_count=2,
+            latency_ms=3.2,
+            device="OpenVINO CPU",
+            face_detected=True,
+            status="ok",
+        )
+
+        payload = _state_payload(7, state, "frame=7 faces=2")
+
+        self.assertEqual(payload["frame_id"], 7)
+        self.assertEqual(len(payload["faces"]), 2)
+        self.assertEqual(payload["faces"][1]["label"], "happy")
+        self.assertEqual(payload["faces"][1]["face_region"]["x"], 160)
 
 
 if __name__ == "__main__":

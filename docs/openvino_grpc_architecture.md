@@ -44,7 +44,7 @@ There is no Docker and no TorchServe in the active flow.
    - Applies probability smoothing on returned probabilities.
 
 3. Visualize thread
-   - Draws the same top-2 overlay used by the local app.
+   - Draws per-face bounding boxes and expression labels.
    - Publishes latest annotated JPEG to `/snapshot.jpg` and MJPEG preview to `/mjpeg`.
 
 ## Batch Note

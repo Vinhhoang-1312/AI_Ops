@@ -55,12 +55,14 @@ class ExpressionService:
             try:
                 image_b64 = instance["image_b64"]
                 frame = decode_jpeg_b64_to_bgr(str(image_b64))
-                crop, face_region = self._crop_frame(frame, enabled=face_crop)
-                if crop is None:
+                face_crops = self._crop_frame(frame, enabled=face_crop)
+                if not face_crops:
                     results[idx] = {"frame_id": frame_id, "status": "no_face"}
                     continue
-                crops.append(crop)
-                pending.append((idx, frame_id, face_region))
+                results[idx] = {"frame_id": frame_id, "status": "ok", "faces": []}
+                for crop, face_region in face_crops:
+                    crops.append(crop)
+                    pending.append((idx, frame_id, face_region))
             except Exception as exc:
                 results[idx] = {"frame_id": frame_id, "status": "decode_error", "error": str(exc)}
 
@@ -68,7 +70,7 @@ class ExpressionService:
             with self._infer_lock:
                 predictions = self.classifier.predict_batch(crops)
             for prediction, (idx, frame_id, face_region) in zip(predictions, pending):
-                results[idx] = {
+                face_payload = {
                     "frame_id": frame_id,
                     "status": "ok",
                     "label": prediction.label,
@@ -79,6 +81,18 @@ class ExpressionService:
                     "device": prediction.device,
                     "face_region": _face_region_dict(face_region),
                 }
+                result = results[idx]
+                if result is None or result.get("status") != "ok":
+                    result = {"frame_id": frame_id, "status": "ok", "faces": []}
+                    results[idx] = result
+                result.setdefault("faces", []).append(face_payload)
+
+            for result in results:
+                if not result or result.get("status") != "ok" or not result.get("faces"):
+                    continue
+                first_face = result["faces"][0]
+                for key in ("label", "confidence", "probabilities", "top_k", "latency_ms", "device", "face_region"):
+                    result[key] = first_face[key]
 
         normalized_results = [item for item in results if item is not None]
         return {
@@ -90,11 +104,11 @@ class ExpressionService:
             "device": self.classifier.device_name,
         }
 
-    def _crop_frame(self, frame_bgr: Any, enabled: bool) -> tuple[Any | None, FaceRegion | None]:
+    def _crop_frame(self, frame_bgr: Any, enabled: bool) -> list[tuple[Any, FaceRegion]]:
         if not enabled:
             h, w = frame_bgr.shape[:2]
-            return frame_bgr, FaceRegion(0, 0, w, h, detected=False)
-        return self.cropper.crop(frame_bgr)
+            return [(frame_bgr, FaceRegion(0, 0, w, h, detected=False))]
+        return self.cropper.crop_all(frame_bgr)
 
 
 def create_grpc_server(service: ExpressionService, address: str, max_workers: int = 4) -> Any:

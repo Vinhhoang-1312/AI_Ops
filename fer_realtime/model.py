@@ -63,7 +63,7 @@ def select_openvino_device(preferred: str = "AUTO") -> tuple[str, str]:
 
 
 class FaceCropper:
-    """Detect the largest face and return a square crop for the classifier."""
+    """Detect faces and return square crops for the classifier."""
 
     def __init__(self, enabled: bool = True, margin: float = 0.18) -> None:
         self.enabled = enabled
@@ -71,9 +71,15 @@ class FaceCropper:
         self._cascade: Any | None = None
 
     def crop(self, frame_bgr: Any) -> tuple[Any | None, FaceRegion | None]:
+        crops = self.crop_all(frame_bgr, max_faces=1)
+        if not crops:
+            return None, None
+        return crops[0]
+
+    def crop_all(self, frame_bgr: Any, max_faces: int | None = None) -> list[tuple[Any, FaceRegion]]:
         if not self.enabled:
             h, w = frame_bgr.shape[:2]
-            return frame_bgr, FaceRegion(0, 0, w, h, detected=False)
+            return [(frame_bgr, FaceRegion(0, 0, w, h, detected=False))]
 
         cascade = self._load_cascade()
         import cv2
@@ -81,15 +87,19 @@ class FaceCropper:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         faces = cascade.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(48, 48))
         if len(faces) == 0:
-            return None, None
+            return []
 
-        x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
-        crop_region = self._square_with_margin(int(x), int(y), int(w), int(h), frame_bgr.shape[:2])
-        x1, y1, side = crop_region
-        crop = frame_bgr[y1 : y1 + side, x1 : x1 + side]
-        if crop.size == 0:
-            return None, None
-        return crop, FaceRegion(x1, y1, side, side, detected=True)
+        sorted_faces = sorted(faces, key=lambda rect: rect[2] * rect[3], reverse=True)
+        selected_faces = sorted_faces[:max_faces] if max_faces is not None else sorted_faces
+        crops: list[tuple[Any, FaceRegion]] = []
+        for x, y, w, h in selected_faces:
+            crop_region = self._square_with_margin(int(x), int(y), int(w), int(h), frame_bgr.shape[:2])
+            x1, y1, side = crop_region
+            crop = frame_bgr[y1 : y1 + side, x1 : x1 + side]
+            if crop.size == 0:
+                continue
+            crops.append((crop, FaceRegion(x1, y1, side, side, detected=True)))
+        return crops
 
     def _load_cascade(self) -> Any:
         if self._cascade is not None:

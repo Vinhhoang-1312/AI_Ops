@@ -8,9 +8,8 @@ DEFAULT_OPENVINO_MODEL_PATH = PUBLISHED_OPENVINO_MODEL_PATH
 # Backward-compatible name for existing UI/session code. It now points to OpenVINO IR.
 DEFAULT_MODEL_PATH = DEFAULT_OPENVINO_MODEL_PATH
 ASSETS_DIR = PROJECT_ROOT / "assets"
-ROBOT_SVG_PATH = ASSETS_DIR / "support_robot.svg"
 DATA_DIR = PROJECT_ROOT / "data"
-HISTORY_DB_PATH = DATA_DIR / "fer_realtime_history.sqlite3"
+HISTORY_DB_PATH = DATA_DIR / "fer_recognition_history.sqlite3"
 
 IMG_SIZE = 224
 DEFAULT_SAMPLE_RATE_HZ = 3.0
