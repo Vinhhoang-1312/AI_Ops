@@ -22,6 +22,7 @@ from .client import OpenVINOGrpcClient
 class IngestConfig:
     stream_url: str
     model_server_address: str = "127.0.0.1:50051"
+    model_timeout_seconds: float = 90.0
     batch_size: int = 16
     batch_timeout_seconds: float = 0.25
     frame_queue_size: int = 64
@@ -48,7 +49,7 @@ class VisualFrame:
 class StreamIngestPipeline:
     def __init__(self, config: IngestConfig) -> None:
         self.config = config
-        self.client = OpenVINOGrpcClient(config.model_server_address)
+        self.client = OpenVINOGrpcClient(config.model_server_address, timeout_seconds=config.model_timeout_seconds)
         self.frame_queue: queue.Queue[CapturedFrame] = queue.Queue(maxsize=config.frame_queue_size)
         self.visual_queue: queue.Queue[VisualFrame] = queue.Queue(maxsize=config.result_queue_size)
         self.averager = ProbabilityAverager(window_size=config.average_window)
@@ -57,6 +58,8 @@ class StreamIngestPipeline:
         self._latest_lock = threading.Lock()
         self._latest_jpeg: bytes | None = None
         self._latest_summary = "waiting"
+        self._latest_state = RealtimeState()
+        self._latest_frame_id: int | None = None
 
     def run(self) -> None:
         self.start()
@@ -95,6 +98,10 @@ class StreamIngestPipeline:
     def latest_summary(self) -> str:
         with self._latest_lock:
             return self._latest_summary
+
+    def latest_state_snapshot(self) -> dict[str, Any]:
+        with self._latest_lock:
+            return _state_payload(self._latest_frame_id, self._latest_state, self._latest_summary)
 
     def _capture_loop(self) -> None:
         import cv2
@@ -148,7 +155,7 @@ class StreamIngestPipeline:
                 continue
 
             annotated = draw_overlay(item.captured.frame_bgr.copy(), item.state)
-            self._publish_latest(annotated, _state_summary(item.captured.frame_id, item.state))
+            self._publish_latest(annotated, _state_summary(item.captured.frame_id, item.state), item.state, item.captured.frame_id)
             if self.config.show_window:
                 cv2.imshow(self.config.window_name, annotated)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -203,7 +210,7 @@ class StreamIngestPipeline:
                 pass
             target_queue.put_nowait(item)
 
-    def _publish_latest(self, frame_bgr: Any, summary: str) -> None:
+    def _publish_latest(self, frame_bgr: Any, summary: str, state: RealtimeState, frame_id: int) -> None:
         import cv2
 
         ok, encoded = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
@@ -212,6 +219,8 @@ class StreamIngestPipeline:
         with self._latest_lock:
             self._latest_jpeg = encoded.tobytes()
             self._latest_summary = summary
+            self._latest_state = state
+            self._latest_frame_id = frame_id
 
     def _set_summary(self, summary: str) -> None:
         with self._latest_lock:
@@ -222,6 +231,7 @@ def config_from_env() -> IngestConfig:
     return IngestConfig(
         stream_url=os.environ.get("IP_CAMERA_URL", "0"),
         model_server_address=os.environ.get("MODEL_SERVER_ADDRESS", "127.0.0.1:50051"),
+        model_timeout_seconds=float(os.environ.get("MODEL_SERVER_TIMEOUT_SECONDS", "90")),
         batch_size=int(os.environ.get("INGEST_BATCH_SIZE", "16")),
         batch_timeout_seconds=float(os.environ.get("INGEST_BATCH_TIMEOUT_SECONDS", "0.25")),
         frame_queue_size=int(os.environ.get("INGEST_FRAME_QUEUE_SIZE", "64")),
@@ -260,6 +270,38 @@ def _state_summary(frame_id: int, state: RealtimeState) -> str:
         return f"frame={frame_id} status={state.status}"
     top_two = " | ".join(f"{label}={score * 100:.1f}%" for label, score in state.top_k[:2])
     return f"frame={frame_id} {top_two} latency_ms={state.latency_ms:.1f}"
+
+
+def _state_payload(frame_id: int | None, state: RealtimeState, summary: str) -> dict[str, Any]:
+    top_k = [{"label": label, "score": score} for label, score in state.top_k[:3]]
+    cues = []
+    for label, score in state.top_k[:2]:
+        cue = cue_for_expression(label, score)
+        cues.append(
+            {
+                "label": label,
+                "score": score,
+                "display_name": cue.display_name,
+                "headline": cue.headline,
+                "tone": cue.tone,
+                "action": cue.action,
+                "suggested_response": cue.suggested_response,
+            }
+        )
+
+    return {
+        "frame_id": frame_id,
+        "status": state.status,
+        "summary": summary,
+        "label": state.label,
+        "confidence": state.confidence,
+        "top_k": top_k,
+        "cues": cues,
+        "sample_count": state.sample_count,
+        "latency_ms": state.latency_ms,
+        "device": state.device,
+        "face_detected": state.face_detected,
+    }
 
 
 if __name__ == "__main__":

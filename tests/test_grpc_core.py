@@ -29,6 +29,7 @@ class IngestConfigTest(unittest.TestCase):
 
         self.assertEqual(config.batch_size, 16)
         self.assertEqual(config.model_server_address, "127.0.0.1:50051")
+        self.assertEqual(config.model_timeout_seconds, 90.0)
 
     def test_local_camera_index_is_supported(self):
         self.assertEqual(_opencv_source("0"), 0)
