@@ -1,0 +1,7 @@
+-r requirements-realtime.txt
+kaggle>=1.6.17
+ultralytics>=8.4.62
+scikit-learn>=1.5
+pandas>=2.2
+matplotlib>=3.8
+pyyaml>=6.0

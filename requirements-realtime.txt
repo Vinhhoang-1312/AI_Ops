@@ -1,0 +1,10 @@
+# OpenVINO realtime inference, Streamlit UI, and local gRPC serving.
+openvino==2025.0.0
+numpy>=1.26,<2.3
+opencv-python>=4.9
+grpcio>=1.64
+fastapi>=0.111
+uvicorn[standard]>=0.30
+streamlit>=1.36
+streamlit-webrtc>=0.47
+av>=12.0

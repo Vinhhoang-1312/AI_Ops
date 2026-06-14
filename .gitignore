@@ -1,0 +1,21 @@
+# Local data and generated artifacts
+data/
+runs/
+
+# Downloaded / generated model weights
+*.pt
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+
+# OS/editor clutter
+.DS_Store
+Thumbs.db

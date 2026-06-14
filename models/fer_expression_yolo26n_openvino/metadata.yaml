@@ -1,0 +1,33 @@
+description: Ultralytics YOLO26n-cls model trained on C:\Users\DELL\Desktop\Vinh Hoang\Master
+  Program\AI trong sản xuất DevOps, DataOps, MLOps\Lab1\data\fer_expression_yolo_prepared
+author: Ultralytics
+date: '2026-06-14T08:55:44.121977'
+version: 8.4.60
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 1
+task: classify
+batch: 1
+imgsz:
+- 224
+- 224
+names:
+  0: angry
+  1: contempt
+  2: disgust
+  3: fear
+  4: happy
+  5: neutral
+  6: sad
+  7: sleepy
+  8: surprise
+args:
+  data: null
+  batch: 1
+  fraction: 1.0
+  half: false
+  int8: false
+  dynamic: false
+  nms: false
+channels: 3
+end2end: false
