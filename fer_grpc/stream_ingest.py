@@ -7,12 +7,13 @@ import queue
 import signal
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from fer_realtime.analyzer import FaceExpression, RealtimeState, draw_overlay
 from fer_realtime.model import FaceRegion
 from fer_realtime.smoothing import ProbabilityAverager
+from fer_realtime.tracking import FaceTracker
 
 from .client import OpenVINOGrpcClient
 
@@ -52,6 +53,7 @@ class StreamIngestPipeline:
         self.frame_queue: queue.Queue[CapturedFrame] = queue.Queue(maxsize=config.frame_queue_size)
         self.visual_queue: queue.Queue[VisualFrame] = queue.Queue(maxsize=config.result_queue_size)
         self.averager = ProbabilityAverager(window_size=config.average_window)
+        self.tracker = FaceTracker()
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
         self._latest_lock = threading.Lock()
@@ -179,11 +181,13 @@ class StreamIngestPipeline:
 
     def _state_from_result(self, result: dict[str, Any]) -> RealtimeState:
         if result.get("status") != "ok":
+            self.tracker.assign([])
             return RealtimeState(status=str(result.get("status", "error")))
 
         faces = [_face_expression_from_dict(item) for item in result.get("faces", []) if isinstance(item, dict)]
         faces = [face for face in faces if face is not None]
         if faces:
+            faces = _with_tracking_ids(faces, self.tracker)
             first = faces[0]
             return RealtimeState(
                 label=first.label,
@@ -201,6 +205,7 @@ class StreamIngestPipeline:
             )
 
         probabilities = {str(k): float(v) for k, v in result.get("probabilities", {}).items()}
+        self.tracker.assign([])
         averaged = self.averager.update(probabilities)
         top_k = sorted(averaged.probabilities.items(), key=lambda item: item[1], reverse=True)[:3]
         label = averaged.label
@@ -298,12 +303,16 @@ def _face_expression_from_dict(value: dict[str, Any]) -> FaceExpression | None:
         face_region=region,
         latency_ms=float(value.get("latency_ms", 0.0)),
         device=str(value.get("device", "")),
+        track_id=_optional_int(value.get("track_id")),
     )
 
 
 def _state_summary(frame_id: int, state: RealtimeState) -> str:
     if state.faces:
-        labels = " | ".join(f"face{idx + 1}:{face.label}={face.confidence * 100:.1f}%" for idx, face in enumerate(state.faces[:3]))
+        labels = " | ".join(
+            f"face#{face.track_id if face.track_id is not None else idx + 1}:{face.label}={face.confidence * 100:.1f}%"
+            for idx, face in enumerate(state.faces[:3])
+        )
         return f"frame={frame_id} faces={len(state.faces)} {labels} latency_ms={state.latency_ms:.1f}"
     if not state.top_k:
         return f"frame={frame_id} status={state.status}"
@@ -316,6 +325,7 @@ def _state_payload(frame_id: int | None, state: RealtimeState, summary: str) -> 
     faces = [
         {
             "label": face.label,
+            "track_id": face.track_id,
             "confidence": face.confidence,
             "top_k": [{"label": label, "score": score} for label, score in face.top_k[:3]],
             "face_region": {
@@ -344,6 +354,20 @@ def _state_payload(frame_id: int | None, state: RealtimeState, summary: str) -> 
         "device": state.device,
         "face_detected": state.face_detected,
     }
+
+
+def _with_tracking_ids(faces: list[FaceExpression], tracker: FaceTracker) -> list[FaceExpression]:
+    track_ids = tracker.assign([face.face_region for face in faces])
+    return [replace(face, track_id=track_id) for face, track_id in zip(faces, track_ids)]
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 if __name__ == "__main__":

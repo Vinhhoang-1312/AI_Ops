@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock
 from time import monotonic
@@ -11,6 +11,7 @@ from typing import Any
 from .config import DEFAULT_AVERAGE_WINDOW, DEFAULT_OPENVINO_MODEL_PATH, DEFAULT_SAMPLE_RATE_HZ, IMG_SIZE
 from .model import FaceCropper, FaceRegion, OpenVINOExpressionClassifier
 from .smoothing import FrameSampler, ProbabilityAverager
+from .tracking import FaceTracker
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class FaceExpression:
     face_region: FaceRegion
     latency_ms: float = 0.0
     device: str = ""
+    track_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ class RealtimeEmotionAnalyzer:
         self.cropper = FaceCropper(enabled=face_crop)
         self.sampler = FrameSampler(sample_rate_hz=sample_rate_hz)
         self.averager = ProbabilityAverager(window_size=average_window)
+        self.tracker = FaceTracker()
         self._state = RealtimeState(device=self.classifier.device_name)
         self._lock = Lock()
 
@@ -78,12 +81,14 @@ class RealtimeEmotionAnalyzer:
         with self._lock:
             self.sampler.reset()
             self.averager.clear()
+            self.tracker.reset()
             self._state = RealtimeState(device=self.classifier.device_name)
 
     def _analyze_sample(self, frame_bgr: Any, now: float) -> None:
         try:
             face_crops = self.cropper.crop_all(frame_bgr)
             if not face_crops:
+                self.tracker.assign([])
                 with self._lock:
                     self._state = RealtimeState(
                         device=self.classifier.device_name,
@@ -127,6 +132,7 @@ class RealtimeEmotionAnalyzer:
                     for prediction, (_crop, face_region) in zip(predictions, face_crops)
                 ]
 
+            face_results = _with_tracking_ids(face_results, self.tracker)
             first = face_results[0]
 
             with self._lock:
@@ -165,7 +171,8 @@ def draw_overlay(frame_bgr: Any, state: RealtimeState) -> Any:
             continue
         x2, y2 = region.x + region.w, region.y + region.h
         cv2.rectangle(frame_bgr, (region.x, region.y), (x2, y2), (16, 118, 111), 2)
-        label = f"{face.label.upper()} {face.confidence * 100:.0f}%"
+        identity = f"FACE #{face.track_id}" if face.track_id is not None else "FACE"
+        label = f"{identity} {face.label.upper()} {face.confidence * 100:.0f}%"
         _draw_label(frame_bgr, label, region.x, max(0, region.y - 8))
 
     status = f"faces={len(faces)} | {state.device} | {state.latency_ms:.0f} ms"
@@ -198,8 +205,14 @@ def _legacy_face_list(state: RealtimeState) -> list[FaceExpression]:
             face_region=state.face_region,
             latency_ms=state.latency_ms,
             device=state.device,
+            track_id=1,
         )
     ]
+
+
+def _with_tracking_ids(faces: list[FaceExpression], tracker: FaceTracker) -> list[FaceExpression]:
+    track_ids = tracker.assign([face.face_region for face in faces])
+    return [replace(face, track_id=track_id) for face, track_id in zip(faces, track_ids)]
 
 
 def _draw_label(frame_bgr: Any, text: str, x: int, y: int) -> None:

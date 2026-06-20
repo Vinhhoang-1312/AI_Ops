@@ -7,6 +7,7 @@ from fer_realtime.analyzer import FaceExpression
 from fer_realtime.history import fetch_recent_snapshots, save_state_snapshot
 from fer_realtime.model import FaceRegion, OpenVINOExpressionClassifier, validate_openvino_model_path
 from fer_realtime.smoothing import FrameSampler, ProbabilityAverager
+from fer_realtime.tracking import FaceTracker
 
 
 @dataclass
@@ -26,6 +27,7 @@ class DummyState:
                 confidence=0.8,
                 top_k=[("neutral", 0.8), ("happy", 0.2)],
                 face_region=FaceRegion(10, 20, 120, 120, detected=True),
+                track_id=7,
             )
         ]
     )
@@ -62,6 +64,24 @@ class ProbabilityAveragerTest(unittest.TestCase):
 
         self.assertEqual(result.label, "happy")
         self.assertAlmostEqual(result.probabilities["happy"], 1.0)
+
+
+class FaceTrackerTest(unittest.TestCase):
+    def test_keeps_id_for_overlapping_face(self):
+        tracker = FaceTracker()
+
+        first_id = tracker.assign([FaceRegion(10, 20, 100, 100, detected=True)])[0]
+        second_id = tracker.assign([FaceRegion(16, 25, 100, 100, detected=True)])[0]
+
+        self.assertEqual(first_id, second_id)
+
+    def test_assigns_new_id_for_different_face(self):
+        tracker = FaceTracker()
+
+        first_id = tracker.assign([FaceRegion(10, 20, 100, 100, detected=True)])[0]
+        second_id = tracker.assign([FaceRegion(250, 220, 100, 100, detected=True)])[0]
+
+        self.assertNotEqual(first_id, second_id)
 
 
 class OpenVINOModelValidationTest(unittest.TestCase):
@@ -103,6 +123,7 @@ class HistoryTest(unittest.TestCase):
             self.assertEqual(rows[0]["top_emotions"][0][0], "neutral")
             self.assertEqual(rows[0]["face_count"], 1)
             self.assertEqual(rows[0]["faces"][0]["label"], "neutral")
+            self.assertEqual(rows[0]["faces"][0]["track_id"], 7)
 
 
 if __name__ == "__main__":

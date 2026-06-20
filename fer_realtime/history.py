@@ -117,6 +117,7 @@ def _faces(state: Any) -> list[dict[str, Any]]:
         items.append(
             {
                 "rank": idx,
+                "track_id": getattr(face, "track_id", None),
                 "label": str(getattr(face, "label", "unknown")),
                 "confidence": float(getattr(face, "confidence", 0.0)),
                 "top_k": [(str(label), float(score)) for label, score in (getattr(face, "top_k", None) or [])],

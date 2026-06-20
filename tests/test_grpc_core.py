@@ -83,6 +83,7 @@ class StreamIngestServerTest(unittest.TestCase):
                     face_region=FaceRegion(10, 20, 100, 100, detected=True),
                     latency_ms=3.2,
                     device="OpenVINO CPU",
+                    track_id=3,
                 ),
                 FaceExpression(
                     label="happy",
@@ -91,6 +92,7 @@ class StreamIngestServerTest(unittest.TestCase):
                     face_region=FaceRegion(160, 22, 96, 96, detected=True),
                     latency_ms=3.2,
                     device="OpenVINO CPU",
+                    track_id=4,
                 ),
             ],
             sample_count=2,
@@ -104,7 +106,9 @@ class StreamIngestServerTest(unittest.TestCase):
 
         self.assertEqual(payload["frame_id"], 7)
         self.assertEqual(len(payload["faces"]), 2)
+        self.assertEqual(payload["faces"][0]["track_id"], 3)
         self.assertEqual(payload["faces"][1]["label"], "happy")
+        self.assertEqual(payload["faces"][1]["track_id"], 4)
         self.assertEqual(payload["faces"][1]["face_region"]["x"], 160)
 
 

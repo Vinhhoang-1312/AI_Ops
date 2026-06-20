@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -65,10 +66,11 @@ def select_openvino_device(preferred: str = "AUTO") -> tuple[str, str]:
 class FaceCropper:
     """Detect faces and return square crops for the classifier."""
 
-    def __init__(self, enabled: bool = True, margin: float = 0.18) -> None:
+    def __init__(self, enabled: bool = True, margin: float = 0.18, detector_mode: str | None = None) -> None:
         self.enabled = enabled
         self.margin = float(margin)
-        self._cascade: Any | None = None
+        self.detector_mode = _normalize_detector_mode(detector_mode or os.environ.get("FACE_DETECTOR_MODE", "fast"))
+        self._cascades: list[tuple[str, Any]] | None = None
 
     def crop(self, frame_bgr: Any) -> tuple[Any | None, FaceRegion | None]:
         crops = self.crop_all(frame_bgr, max_faces=1)
@@ -81,11 +83,10 @@ class FaceCropper:
             h, w = frame_bgr.shape[:2]
             return [(frame_bgr, FaceRegion(0, 0, w, h, detected=False))]
 
-        cascade = self._load_cascade()
         import cv2
 
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(48, 48))
+        faces = self._detect_faces(gray, frame_bgr.shape[1])
         if len(faces) == 0:
             return []
 
@@ -101,18 +102,43 @@ class FaceCropper:
             crops.append((crop, FaceRegion(x1, y1, side, side, detected=True)))
         return crops
 
-    def _load_cascade(self) -> Any:
-        if self._cascade is not None:
-            return self._cascade
+    def _load_cascades(self) -> list[tuple[str, Any]]:
+        if self._cascades is not None:
+            return self._cascades
 
         import cv2
 
-        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
-        cascade = cv2.CascadeClassifier(str(cascade_path))
-        if cascade.empty():
-            raise RuntimeError(f"Could not load OpenCV face cascade: {cascade_path}")
-        self._cascade = cascade
-        return cascade
+        cascade_names = _cascade_names_for_mode(self.detector_mode)
+        cascades = []
+        for cascade_name in cascade_names:
+            cascade_path = Path(cv2.data.haarcascades) / cascade_name
+            if not cascade_path.exists():
+                continue
+            cascade = cv2.CascadeClassifier(str(cascade_path))
+            if not cascade.empty():
+                cascades.append((cascade_name, cascade))
+
+        if not cascades:
+            raise RuntimeError(f"Could not load any OpenCV face cascade from: {cv2.data.haarcascades}")
+        self._cascades = cascades
+        return cascades
+
+    def _detect_faces(self, gray_frame: Any, frame_width: int) -> list[tuple[int, int, int, int]]:
+        import cv2
+
+        detections: list[tuple[int, int, int, int]] = []
+        flipped = cv2.flip(gray_frame, 1)
+        for cascade_name, cascade in self._load_cascades():
+            faces = cascade.detectMultiScale(gray_frame, scaleFactor=1.12, minNeighbors=5, minSize=(48, 48))
+            detections.extend((int(x), int(y), int(w), int(h)) for x, y, w, h in faces)
+
+            if "profile" not in cascade_name:
+                continue
+            flipped_faces = cascade.detectMultiScale(flipped, scaleFactor=1.12, minNeighbors=5, minSize=(48, 48))
+            for x, y, w, h in flipped_faces:
+                detections.append((int(frame_width - x - w), int(y), int(w), int(h)))
+
+        return _merge_overlapping_faces(detections)
 
     def _square_with_margin(self, x: int, y: int, w: int, h: int, frame_shape: tuple[int, int]) -> tuple[int, int, int]:
         frame_h, frame_w = frame_shape
@@ -267,6 +293,56 @@ class OpenVINOExpressionClassifier:
         except Exception:
             pass
         return f"OpenVINO {self.device}"
+
+
+def _merge_overlapping_faces(faces: list[tuple[int, int, int, int]], iou_threshold: float = 0.32) -> list[tuple[int, int, int, int]]:
+    if not faces:
+        return []
+
+    kept: list[tuple[int, int, int, int]] = []
+    for face in sorted(faces, key=lambda item: item[2] * item[3], reverse=True):
+        if all(_rect_iou(face, existing) < iou_threshold for existing in kept):
+            kept.append(face)
+    return kept
+
+
+def _rect_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+
+    inter_x1 = max(ax, bx)
+    inter_y1 = max(ay, by)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    intersection = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+    union = aw * ah + bw * bh - intersection
+    if union <= 0:
+        return 0.0
+    return intersection / union
+
+
+def _normalize_detector_mode(value: str) -> str:
+    mode = value.strip().lower()
+    if mode in {"fast", "balanced", "robust"}:
+        return mode
+    return "fast"
+
+
+def _cascade_names_for_mode(mode: str) -> tuple[str, ...]:
+    if mode == "robust":
+        return (
+            "haarcascade_frontalface_default.xml",
+            "haarcascade_frontalface_alt2.xml",
+            "haarcascade_profileface.xml",
+        )
+    if mode == "balanced":
+        return (
+            "haarcascade_frontalface_default.xml",
+            "haarcascade_frontalface_alt2.xml",
+        )
+    return ("haarcascade_frontalface_default.xml",)
 
 
 def _load_openvino_names(xml_path: Path) -> dict[int, str]:

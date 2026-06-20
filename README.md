@@ -63,6 +63,7 @@ Output cua model chi nen hieu la visible facial expression tren camera frame, kh
 - Crop tung khuon mat rieng.
 - Classify expression cua tung face crop bang OpenVINO.
 - Ve bounding box va label ngay gan khuon mat tuong ung.
+- Giu `Face #ID` on dinh tuong doi giua cac frame de demo multi-face de doc hon.
 - Hien ket qua moi face trong browser UI.
 - Co nut `Dung lai` / `Chay tiep` de doc ket qua ro hon.
 - Co nut `Luu snapshot` de luu ket qua hien tai vao SQLite.
@@ -290,12 +291,15 @@ Notebook thuc hien:
 | `INGEST_RESULT_QUEUE_SIZE` | `64` | Queue size cho inference results. |
 | `INGEST_AVERAGE_WINDOW` | `3` | Fallback smoothing window khi chi co single-result path. |
 | `INGEST_FACE_CROP` | `true` | Bat/tat face crop trong model server. |
+| `FACE_DETECTOR_MODE` | `fast` | `fast` nhe nhat, `balanced` them frontal alt, `robust` them profile face nhung cham hon. |
 | `INGEST_SHOW_WINDOW` | `false` | Mo OpenCV local window neu can. |
 
 Voi laptop CPU, nen bat dau bang:
 
 ```powershell
 set INGEST_BATCH_SIZE=4
+set INGEST_BATCH_TIMEOUT_SECONDS=0.05
+set FACE_DETECTOR_MODE=fast
 ```
 
 Batch lon hon co the tang throughput, nhung cung co the lam latency cao hoac timeout neu CPU cham.
@@ -320,8 +324,8 @@ Tests cover:
 
 ## Current Limitations
 
-- Face detector hien tai la OpenCV Haar Cascade, nhe nhung co the miss face nghieng, face nho, bi che, hoac anh sang xau.
-- Chua co face tracking ID theo thoi gian. `Face #1` va `Face #2` la thu tu trong frame hien tai.
+- Face detector hien tai la OpenCV Haar Cascade. Mac dinh `fast` de demo muot hon; `robust` bat them frontal alt/profile fallback nhung ton CPU hon.
+- Face tracking ID la IoU tracker nhe theo bbox, du tot cho demo nhung khong phai face identity recognition that su.
 - OpenVINO model co the dang batch 1; wrapper se thu dynamic batch va fallback per-frame neu can.
 - gRPC local hien tai chua co TLS.
 - gRPC protocol dung JSON bytes de don gian, chua dung generated protobuf schema.

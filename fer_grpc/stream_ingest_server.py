@@ -133,11 +133,12 @@ def index() -> str:
             }
             return faces.map((face, index) => {
               const region = face.face_region || {};
+              const faceId = face.track_id ?? (index + 1);
               return `
                 <div class="face-card">
                   <div class="face-top">
                     <div>
-                      <div class="face-title">Face #${index + 1}</div>
+                      <div class="face-title">Face #${faceId}</div>
                       <div class="face-label">${escapeHtml(face.label || 'unknown')}</div>
                       <div class="meta">bbox x=${region.x ?? 0}, y=${region.y ?? 0}, w=${region.w ?? 0}, h=${region.h ?? 0}</div>
                     </div>
