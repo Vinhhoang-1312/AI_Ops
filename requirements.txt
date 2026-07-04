@@ -1,0 +1,10 @@
+numpy
+scikit-learn
+streamlit
+langfuse
+sentence-transformers
+huggingface-hub
+pytest
+openvino
+transformers
+torch
